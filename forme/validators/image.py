@@ -32,5 +32,5 @@ class ImageUpload(forme.validators.upload.PersistentUpload):
 
         image.save(os.path.join(self.dir, fieldobj.filename), self.format,
                    quality=self.quality)
-
+        self._save_checksum(fieldobj)
         return fieldobj

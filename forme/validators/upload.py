@@ -9,6 +9,21 @@ import formencode
 
 import forme.util
 
+
+class Upload(formencode.validators.FieldStorageUploadConverter):
+
+    def is_empty(self, value):
+        """"""
+        if value and 'upload' in value:
+            if isinstance(value['upload'], cgi.FieldStorage):
+                return (formencode.validators.
+                            FieldStorageUploadConverter.is_empty(self,
+                                                            value['upload']))
+        elif value and 'stored' in value and value['stored']:
+            return False
+        return True
+
+
 class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
     """Validate an upload and store it.
 
@@ -32,6 +47,8 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
 
     upload_key = "upload"
     stored_key = "stored"
+    persist_key = "persist"
+    #initial_upload_key = "initial_upload"
     stored_path_key = "stored_path"
 
     @property
@@ -42,10 +59,12 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
     allow_duplicate = True
 
     def __init__(self, *args, **kwa):
+        raise DeprecationWarning()
+        #self.checksum_map = {}
         for attr in ('min', 'max', 'dir','make_dir', 'lower_ext', 'random_name',
                      'random_length', 'upload_key', 'stored_key',
                      'checksum_filepath', 'checksum_blocksize',
-                     'allow_duplicate'): # 'file_key'
+                     'allow_duplicate', 'checksum_map'): # 'file_key'
             if attr in kwa:
                 setattr(self, attr, kwa.pop(attr))
 
@@ -53,24 +72,26 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
             if not os.path.exists(self.dir):
                 os.makedirs(self.dir)
 
-        self.checksum_map = {}
-
+        '''
         try:
             checksum_file = open(self.checksum_filepath, "rb")
         except FileNotFoundError:
-            self.checksum_file = open(self.checksum_filepath, "wb")
+            checksum_file = open(self.checksum_filepath, "wb")
         else:
-            try:
-                self.checksum_map = pickle.load(checksum_file)
-            except EOFError:
-                pass
-            self.checksum_file = open(self.checksum_filepath, "r+b")
+            if not self.checksum_map:
+                try:
+                    self.checksum_map = pickle.load(checksum_file)
+                except EOFError:
+                    pass
+        '''
+            #self.checksum_file = open(self.checksum_filepath, "r+b")
 
         (formencode.validators.FieldStorageUploadConverter.
             __init__(self, *args, **kwa))
 
     def __del__(self):
-        self.checksum_file.close()
+        pass
+        #self.checksum_file.close()
 
     def _checksum(self, fieldobj, rewind=True):
         md5 = hashlib.md5()
@@ -90,14 +111,17 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
             # We already have the file.
             fieldobj.filename = self.checksum_map[digest]
             return True
-        else:
-            self.checksum_map[digest] = fieldobj.filename
-            pickle.dump(self.checksum_map, self.checksum_file)
-            self.checksum_file.seek(0)
+
+    def _save_checksum(self, fieldobj):
+        digest = self._checksum(fieldobj)
+        self.checksum_map[digest] = fieldobj.filename
+        with open(self.checksum_filepath, "wb") as checksum_file:
+            pickle.dump(self.checksum_map, checksum_file)
 
     def _persist(self, fieldobj):
         shutil.copyfileobj(fieldobj.file,
             open(os.path.join(self.dir, fieldobj.filename), 'wb'))
+        self._save_checksum(fieldobj)
 
     def _checkpersist(self, filename):
         return os.path.exists(os.path.join(self.dir, filename))
@@ -139,18 +163,14 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
             (formencode.validators.UnicodeString(max=256, min=3).
                 to_python(uploadobj.filename))
 
-            if self.allow_duplicate is not True:
-                if self._checkdupe(uploadobj) is True:
-                    print("remove upload key.")
-                    del value['upload']
-                else:
-                    self._persist(uploadobj)
-            else:
-                self._persist(uploadobj)
+            # Refactor due to logic changes.
+            if (self.allow_duplicate is True or
+                    self._checkdupe(uploadobj) is not True):
+                value[self.persist_key] = lambda: self._persist(uploadobj)
 
-            #value[self.file_key] = uploadobj
             value[self.stored_key] = uploadobj.filename
-
+            #uploadobj.file.close()
+            #del value[self.upload_key]
 
         elif fieldstored is not None:
             if self._checkpersist(fieldstored) is not True:
@@ -161,6 +181,9 @@ class PersistentUpload(formencode.validators.FieldStorageUploadConverter):
             #value[self.stored_key] = fieldobj.filename
 
         else:
+            #del value[self.upload_key]
+            if self.not_empty is True:
+                raise formencode.Invalid('Please select a file to upload.', value, state)
             return None
 
         value[self.stored_path_key] = os.path.join(self.dir, value[self.stored_key])
