@@ -9,11 +9,11 @@ with open(os.path.join(here, 'CHANGES.txt')) as f:
     CHANGES = f.read()
 
 requires = [
-    'formencode',
+    # 'formencode',
     ]
 
 setup(name='forme',
-      version='0.1',
+      version='0.2',
       description='Python Formencode utilities.',
       long_description=README + '\n\n' + CHANGES,
       classifiers=[
